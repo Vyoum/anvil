@@ -61,3 +61,14 @@ export const decodeUnsubToken = (token) => {
     return null;
   }
 };
+
+/**
+ * Parses spintax like {Hi|Hello|Hey} into a random selection.
+ */
+export const parseSpintax = (text) => {
+  if (!text) return text;
+  return text.replace(/\{([^{}]+)\}/g, (match, choices) => {
+    const options = choices.split("|");
+    return options[Math.floor(Math.random() * options.length)];
+  });
+};
