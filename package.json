@@ -1,0 +1,17 @@
+{
+  "name": "anvil",
+  "version": "1.0.0",
+  "description": "A cold mailing agent",
+  "main": "src/agents/coldmailAgent.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/workflows/coldMailWorkflow.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.0",
+    "openai": "^4.0.0",
+    "google-spreadsheet": "^4.0.0",
+    "dotenv": "^16.0.0",
+    "uuid": "^9.0.0"
+  }
+}
