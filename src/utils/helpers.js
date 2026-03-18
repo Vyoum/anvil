@@ -1,74 +1,112 @@
 // src/utils/helpers.js
+import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
-import { v4 as uuidv4 } from "uuid";
+import { env } from "../config/env.js";
 
-export const uuid = () => uuidv4();
+// ─── Sleep ────────────────────────────────────────────────────────────────────
 
-export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-export const randomDelay = (min = 2000, max = 5000) => 
-  Math.floor(Math.random() * (max - min + 1)) + min;
+// ─── Random delay within a range ─────────────────────────────────────────────
 
-export const pct = (numerator, denominator) => 
-  denominator === 0 ? "0%" : `${Math.round((numerator / denominator) * 100)}%`;
+export function randomDelay(minMs = env.minDelayMs, maxMs = env.maxDelayMs) {
+  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
 
-export const calcDeliverabilityScore = ({ sent, bounced, spamReported }) => {
-  if (sent === 0) return 100;
-  const health = 100 - ((bounced * 2 + spamReported * 5) / sent) * 100;
-  return Math.max(0, Math.round(health));
-};
+// ─── Unsubscribe token (HMAC-signed, base64url) ───────────────────────────────
+
+export function generateUnsubToken(email) {
+  const hmac = crypto
+    .createHmac("sha256", env.unsubSecret)
+    .update(email.toLowerCase())
+    .digest("hex");
+  return Buffer.from(`${email.toLowerCase()}:${hmac}`).toString("base64url");
+}
+
+export function decodeUnsubToken(token) {
+  try {
+    const decoded = Buffer.from(token, "base64url").toString("utf8");
+    const colonIdx = decoded.lastIndexOf(":");
+    const email    = decoded.slice(0, colonIdx);
+    const hmac     = decoded.slice(colonIdx + 1);
+    const expected = crypto
+      .createHmac("sha256", env.unsubSecret)
+      .update(email)
+      .digest("hex");
+    return hmac === expected ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Email tracking link wrapper ──────────────────────────────────────────────
+
+export function buildTrackingPixelUrl(emailId) {
+  return `${env.appUrl}/track/open/${emailId}`;
+}
+
+export function wrapLinksForTracking(html, emailId) {
+  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, url) => {
+    if (url.includes("/unsubscribe") || url.includes("/track/")) return match;
+    const wrapped = `${env.appUrl}/track/click/${emailId}?redirect=${encodeURIComponent(url)}`;
+    return `href="${wrapped}"`;
+  });
+}
+
+// ─── JSON file store (lightweight persistence — no DB needed) ─────────────────
 
 export const store = {
   async read(filename) {
+    const filePath = path.join(env.dataDir, filename);
     try {
-      const data = await fs.readFile(path.join(process.cwd(), "data", filename), "utf8");
-      return JSON.parse(data);
-    } catch (err) {
+      const raw = await fs.readFile(filePath, "utf8");
+      return JSON.parse(raw);
+    } catch {
       return null;
     }
   },
 
+  async write(filename, data) {
+    await fs.mkdir(env.dataDir, { recursive: true });
+    const filePath = path.join(env.dataDir, filename);
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
+  },
+
   async append(filename, record) {
-    const dataDir = path.join(process.cwd(), "data");
-    try {
-      await fs.mkdir(dataDir, { recursive: true });
-      const existing = await this.read(filename) || [];
-      existing.push(record);
-      await fs.writeFile(path.join(dataDir, filename), JSON.stringify(existing, null, 2));
-    } catch (err) {
-      console.error(`Error appending to ${filename}:`, err);
-    }
+    const existing = (await this.read(filename)) || [];
+    existing.push(record);
+    await this.write(filename, existing);
   },
 
-  async find(filename, predicate) {
-    const data = await this.read(filename) || [];
-    return data.filter(predicate);
+  async update(filename, matchFn, updateFn) {
+    const records = (await this.read(filename)) || [];
+    const updated = records.map((r) => (matchFn(r) ? { ...r, ...updateFn(r) } : r));
+    await this.write(filename, updated);
   },
 
-  async update(filename, predicate, updateFn) {
-    const dataDir = path.join(process.cwd(), "data");
-    const existing = await this.read(filename) || [];
-    const updated = existing.map(item => predicate(item) ? { ...item, ...updateFn(item) } : item);
-    await fs.writeFile(path.join(dataDir, filename), JSON.stringify(updated, null, 2));
-  }
+  async find(filename, matchFn) {
+    const records = (await this.read(filename)) || [];
+    return records.filter(matchFn);
+  },
 };
 
-export const decodeUnsubToken = (token) => {
-  try {
-    return Buffer.from(token, "base64").toString("utf8");
-  } catch (err) {
-    return null;
-  }
-};
+// ─── Misc ────────────────────────────────────────────────────────────────────
 
-/**
- * Parses spintax like {Hi|Hello|Hey} into a random selection.
- */
-export const parseSpintax = (text) => {
-  if (!text) return text;
-  return text.replace(/\{([^{}]+)\}/g, (match, choices) => {
-    const options = choices.split("|");
-    return options[Math.floor(Math.random() * options.length)];
-  });
-};
+export function calcDeliverabilityScore({ sent, bounced, spamReported }) {
+  if (sent === 0) return 100;
+  const bounceRate = bounced / sent;
+  const spamRate   = spamReported / sent;
+  return Math.max(0, Math.round(100 - bounceRate * 50 - spamRate * 100));
+}
+
+export function pct(numerator, denominator) {
+  if (!denominator) return "0%";
+  return `${((numerator / denominator) * 100).toFixed(1)}%`;
+}
+
+export function uuid() {
+  return crypto.randomUUID();
+}

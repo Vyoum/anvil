@@ -25,9 +25,10 @@ export class MailSenderAgent {
    * @param {string}  [options.replyTo]
    * @param {string}  [options.fromName]
    * @param {string}  [options.companyAddress]
+   * @param {Object}  [options.account]        - Optional SMTP account for rotation
    * @returns {Promise<{ messageId: string, emailId: string }>}
    */
-  async sendMail({ to, subject, html, previewText = "", replyTo, fromName, companyAddress }) {
+  async sendMail({ to, subject, html, previewText = "", replyTo, fromName, companyAddress, account }) {
     const emailId    = uuid();
     const unsubToken = generateUnsubToken(to);
 
@@ -35,7 +36,7 @@ export class MailSenderAgent {
     const finalHtml = this._buildFinalHtml(html, emailId, unsubToken, previewText, companyAddress);
 
     const result = await this._sendWithRetry(
-      { to, subject, html: finalHtml, replyTo, fromName },
+      { to, subject, html: finalHtml, replyTo, fromName, account },
       emailId
     );
 
