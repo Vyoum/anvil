@@ -5,7 +5,6 @@ import {
   buildTrackingPixelUrl,
   wrapLinksForTracking,
   uuid,
-  parseSpintax,
 } from "../utils/helpers.js";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
@@ -25,10 +24,9 @@ export class MailSenderAgent {
    * @param {string}  [options.replyTo]
    * @param {string}  [options.fromName]
    * @param {string}  [options.companyAddress]
-   * @param {Object}  [options.account]        - Optional SMTP account for rotation
    * @returns {Promise<{ messageId: string, emailId: string }>}
    */
-  async sendMail({ to, subject, html, previewText = "", replyTo, fromName, companyAddress, account }) {
+  async sendMail({ to, subject, html, previewText = "", replyTo, fromName, companyAddress }) {
     const emailId    = uuid();
     const unsubToken = generateUnsubToken(to);
 
@@ -36,7 +34,7 @@ export class MailSenderAgent {
     const finalHtml = this._buildFinalHtml(html, emailId, unsubToken, previewText, companyAddress);
 
     const result = await this._sendWithRetry(
-      { to, subject, html: finalHtml, replyTo, fromName, account },
+      { to, subject, html: finalHtml, replyTo, fromName },
       emailId
     );
 
@@ -59,8 +57,7 @@ export class MailSenderAgent {
   }
 
   _buildFinalHtml(bodyHtml, emailId, unsubToken, previewText, companyAddress) {
-    const spintaxBody      = parseSpintax(bodyHtml);
-    const trackedBody      = wrapLinksForTracking(spintaxBody, emailId);
+    const trackedBody      = wrapLinksForTracking(bodyHtml, emailId);
     const trackingPixelUrl = buildTrackingPixelUrl(emailId);
     const unsubscribeUrl   = `${env.appUrl}/unsubscribe?token=${unsubToken}`;
 
