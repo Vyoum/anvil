@@ -2,17 +2,25 @@
 import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
 
-const transporter = nodemailer.createTransport({
-  host: env.smtpHost,
-  port: env.smtpPort,
-  secure: env.smtpPort === 465,
-  auth: {
-    user: env.smtpUser,
-    pass: env.smtpPass,
-  },
-});
+/**
+ * Create a transporter for a specific account.
+ */
+export function createTransporter(account = {}) {
+  return nodemailer.createTransport({
+    host: account.smtpHost || env.smtpHost,
+    port: account.smtpPort || env.smtpPort,
+    secure: (account.smtpPort || env.smtpPort) === 465,
+    auth: {
+      user: account.smtpUser || env.smtpUser,
+      pass: account.smtpPass || env.smtpPass,
+    },
+  });
+}
 
-export async function verifyConnection() {
+const defaultTransporter = createTransporter();
+
+export async function verifyConnection(account = null) {
+  const transporter = account ? createTransporter(account) : defaultTransporter;
   try {
     await transporter.verify();
     return true;
@@ -22,15 +30,16 @@ export async function verifyConnection() {
   }
 }
 
-export async function sendMail({ to, subject, html, from }) {
+export async function sendMail({ to, subject, html, from, account = null }) {
+  const transporter = account ? createTransporter(account) : defaultTransporter;
   const info = await transporter.sendMail({
-    from: from || env.smtpUser,
+    from: from || account?.smtpUser || env.smtpUser,
     to,
     subject,
     html,
   });
   return {
     messageId: info.messageId,
-    emailId: info.messageId, // Using messageId as emailId for simplicity
+    emailId: info.messageId,
   };
 }

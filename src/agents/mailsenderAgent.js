@@ -1,11 +1,10 @@
 // src/agents/mailSenderAgent.js
-import { sendEmail } from "../services/emailService.js";
+import { sendEmail as sendEmail } from "../services/emailService.js";
 import {
   generateUnsubToken,
   buildTrackingPixelUrl,
   wrapLinksForTracking,
   uuid,
-  parseSpintax,
 } from "../utils/helpers.js";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
@@ -58,8 +57,7 @@ export class MailSenderAgent {
   }
 
   _buildFinalHtml(bodyHtml, emailId, unsubToken, previewText, companyAddress) {
-    const spintaxBody      = parseSpintax(bodyHtml);
-    const trackedBody      = wrapLinksForTracking(spintaxBody, emailId);
+    const trackedBody      = wrapLinksForTracking(bodyHtml, emailId);
     const trackingPixelUrl = buildTrackingPixelUrl(emailId);
     const unsubscribeUrl   = `${env.appUrl}/unsubscribe?token=${unsubToken}`;
 

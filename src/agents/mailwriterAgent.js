@@ -1,6 +1,6 @@
-// src/agents/mailWriterAgent.js
 import OpenAI from "openai";
 import { env } from "../config/env.js";
+import { logger } from "../utils/logger.js";
 
 export class MailWriterAgent {
   constructor() {
@@ -10,11 +10,7 @@ export class MailWriterAgent {
   async writeColdEmail({ lead, campaign, templateType, stepNumber }) {
     // Basic implementation: if OpenAI API key is missing, return a generic template
     if (!env.openaiApiKey) {
-      return {
-        subject: `Hello from ${campaign.senderName}`,
-        body: `Hi ${lead.firstName},\n\nThis is a cold email about ${campaign.productName}.`,
-        previewText: "A quick introduction"
-      };
+      return this._fallbackTemplate(lead, campaign, templateType);
     }
 
     // Use OpenAI to write a hyper-personalized email
@@ -68,12 +64,26 @@ export class MailWriterAgent {
         previewText: content.previewText || content.body.slice(0, 100) + "..."
       };
     } catch (err) {
-      console.error("[MailWriter] AI Generation failed, falling back to template:", err);
-      return {
-        subject: `Question for ${lead.firstName || lead.company}`,
-        body: `Hi ${lead.firstName || "there"},\n\nI was researching ${lead.company || "your company"} and had a few ideas on how ${campaign.productName} could help with your ${campaign.targetPersona} goals.\n\nWould you be open to a brief chat?\n\nBest,\n${campaign.senderName}`,
-        previewText: "Quick question regarding your goals"
-      };
+      logger.warn(`[MailWriter] Incomplete AI response for ${lead.email} — using fallback template`);
+      return this._fallbackTemplate(lead, campaign, templateType);
     }
+  }
+
+  _fallbackTemplate(lead, campaign, templateType) {
+    const name    = lead.firstName || lead.company || "there";
+    const company = lead.company   || "your company";
+
+    const bodies = {
+      initial:    `Hi ${name},\n\nI was looking at ${company} and had a few ideas on how ${campaign.productName} could help.\n\nWould you be open to a quick chat?\n\n${campaign.senderName}`,
+      followup_1: `Hi ${name},\n\nJust following up on my last email — wanted to make sure it didn't get buried.\n\n${campaign.senderName}`,
+      followup_2: `Hi ${name},\n\nOne last thought — ${campaign.valueProposition}.\n\nWorth a conversation?\n\n${campaign.senderName}`,
+      breakup:    `Hi ${name},\n\nI won't keep following up after this. If timing ever changes, feel free to reach out.\n\n${campaign.senderName}`,
+    };
+
+    return {
+      subject:     `Quick question, ${name}`,
+      body:        bodies[templateType] || bodies.initial,
+      previewText: `A quick note from ${campaign.senderName}`,
+    };
   }
 }
