@@ -25,8 +25,8 @@ export class ColdMailAgent {
     this.mailSender    = new MailSenderAgent();
 
     // Runtime send counters (reset per campaign run)
-    this._sentToday      = 0;
-    this._sentThisHour   = 0;
+    this._sentToday       = 0;
+    this._sentThisHour    = 0;
     this._hourWindowStart = Date.now();
   }
 
@@ -56,7 +56,7 @@ export class ColdMailAgent {
     const dailyLimit  = config.dailyLimit  || env.dailyLimit;
     const hourlyLimit = config.hourlyLimit || env.hourlyLimit;
     const sequence    = config.enableFollowUps === false
-      ? [DEFAULT_SEQUENCE[0]]   // Initial email only
+      ? [DEFAULT_SEQUENCE[0]]
       : DEFAULT_SEQUENCE;
 
     // ── 1. SMTP health check ───────────────────────────────────────────────
@@ -90,7 +90,7 @@ export class ColdMailAgent {
     const activeCampaignId = campaignRecord.campaignId;
 
     // ── 3. Load + filter leads ────────────────────────────────────────────
-    const allLeads  = await this.leadExtractor.getLeads();
+    const allLeads = await this.leadExtractor.getLeads();
     if (!allLeads.length) {
       await this._markCampaignComplete(activeCampaignId, [], "no_leads");
       return { success: false, message: "No valid leads found in Google Sheet." };
@@ -101,8 +101,8 @@ export class ColdMailAgent {
 
     // ── 4. Send loop ──────────────────────────────────────────────────────
     const results = [];
-    this._sentToday      = 0;
-    this._sentThisHour   = 0;
+    this._sentToday       = 0;
+    this._sentThisHour    = 0;
     this._hourWindowStart = Date.now();
 
     for (const lead of leads) {
@@ -129,7 +129,7 @@ export class ColdMailAgent {
         // Write the email
         const mailContent = await this.mailWriter.writeColdEmail({
           lead,
-          campaign: config,
+          campaign:     config,
           templateType: stepDef.templateType,
           stepNumber:   stepDef.step,
         });
@@ -148,6 +148,7 @@ export class ColdMailAgent {
           html:           mailContent.body,
           previewText:    mailContent.previewText,
           companyAddress: config.companyAddress,
+          fromName:       config.senderName,
         });
 
         // Log success
@@ -165,9 +166,9 @@ export class ColdMailAgent {
         });
 
         results.push({
-          email:  lead.email,
-          step:   stepDef.step,
-          status: "sent",
+          email:     lead.email,
+          step:      stepDef.step,
+          status:    "sent",
           messageId: sendResult.messageId,
         });
 
@@ -259,35 +260,60 @@ export class ColdMailAgent {
 
       switch (type) {
         case "bounce":
-        case "hard_bounce":
+        case "hard_bounce": {
           await store.update("emailLogs.json", (r) => r.email === email, () => ({ status: "bounced" }));
           logger.warn(`📛 Bounce: ${email}`);
           break;
+        }
 
+        // FIX (bug 6): was calling handleUnsubscribe(email) which expects a
+        // signed token. Webhook events are server-side — suppress directly.
         case "spam_report":
-        case "complaint":
+        case "complaint": {
           await store.update("emailLogs.json", (r) => r.email === email, () => ({ status: "spam_reported" }));
-          // await this.handleUnsubscribe(email); //
-          // const existing = (await store.read("unsubscribes.json")) || [];
           const existing = (await store.read("unsubscribes.json")) || [];
-+         if (!existing.find((r) => r.email === email)) {
-+           await store.append("unsubscribes.json", { email, unsubscribedAt: new Date().toISOString() });
-+         } 
+          if (!existing.find((r) => r.email === email)) {
+            await store.append("unsubscribes.json", {
+              email,
+              unsubscribedAt: new Date().toISOString(),
+            });
+          }
+          await store.update(
+            "emailLogs.json",
+            (r) => r.email === email,
+            ()  => ({ unsubscribed: true })
+          );
           logger.warn(`🚨 Spam complaint — auto-unsubscribed: ${email}`);
           break;
+        }
 
-        case "open":
-          await store.update("emailLogs.json", (r) => r.messageId === messageId, () => ({ opened: true, openedAt: new Date().toISOString() }));
+        case "open": {
+          await store.update(
+            "emailLogs.json",
+            (r) => r.messageId === messageId,
+            () => ({ opened: true, openedAt: new Date().toISOString() })
+          );
           break;
+        }
 
-        case "click":
-          await store.update("emailLogs.json", (r) => r.messageId === messageId, () => ({ clicked: true, clickedAt: new Date().toISOString() }));
+        case "click": {
+          await store.update(
+            "emailLogs.json",
+            (r) => r.messageId === messageId,
+            () => ({ clicked: true, clickedAt: new Date().toISOString() })
+          );
           break;
+        }
 
-        case "reply":
-          await store.update("emailLogs.json", (r) => r.email === email, () => ({ replied: true, sequenceComplete: true }));
+        case "reply": {
+          await store.update(
+            "emailLogs.json",
+            (r) => r.email === email,
+            () => ({ replied: true, sequenceComplete: true })
+          );
           logger.info(`💬 Reply detected — sequence stopped for: ${email}`);
           break;
+        }
       }
     }
   }
@@ -334,25 +360,28 @@ export class ColdMailAgent {
       (r) => r.campaignId === campaignId && r.email === email && r.status === "sent"
     );
 
-    // Check if lead replied or manually opted out of sequence
     const latestLog = logs.sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt))[0];
+
+    // Stop sequence if lead replied or opted out
     if (latestLog?.sequenceComplete || latestLog?.replied) return null;
 
-    if (!latestLog) return sequence[0];   // Never emailed — start at step 1
+    // Never emailed — start at step 1
+    if (!latestLog) return sequence[0];
 
     const nextStep = sequence.find((s) => s.step === latestLog.step + 1);
-    if (!nextStep) return null;           // Sequence exhausted
+    if (!nextStep) return null; // Sequence exhausted
 
-    // const daysSinceLast =
-    //   (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
-
-    // if (daysSinceLast < nextStep.dayOffset) return null; // Too soon
+    // FIX (bug 5): compare days since LAST send against the DELTA between
+    // consecutive steps, not the raw cumulative dayOffset.
+    // e.g. step 2 is dayOffset 3, step 3 is dayOffset 7 → delta is 4 days,
+    // not 7 days from when step 2 was sent.
     const currentStepDef = sequence.find((s) => s.step === latestLog.step);
-+   const dayDelta        = nextStep.dayOffset - (currentStepDef?.dayOffset ?? 0);
-+   const daysSinceLast   =
-+     (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
-+
-+   if (daysSinceLast < dayDelta) return null;
+    const dayDelta        = nextStep.dayOffset - (currentStepDef?.dayOffset ?? 0);
+    const daysSinceLast   =
+      (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
+
+    if (daysSinceLast < dayDelta) return null; // Too soon
+
     return nextStep;
   }
 
