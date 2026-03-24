@@ -30,7 +30,7 @@ export async function verifyConnection(account = null) {
   }
 }
 
-export async function sendEMail({ to, subject, html, from, account = null }) {
+export async function sendEmail({ to, subject, html, from, account = null }) {
   const transporter = account ? createTransporter(account) : defaultTransporter;
   const info = await transporter.sendMail({
     from: from || account?.smtpUser || env.smtpUser,
