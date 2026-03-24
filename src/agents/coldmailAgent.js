@@ -267,7 +267,12 @@ export class ColdMailAgent {
         case "spam_report":
         case "complaint":
           await store.update("emailLogs.json", (r) => r.email === email, () => ({ status: "spam_reported" }));
-          await this.handleUnsubscribe(email); // Auto-unsubscribe on spam complaints
+          // await this.handleUnsubscribe(email); //
+          // const existing = (await store.read("unsubscribes.json")) || [];
+          const existing = (await store.read("unsubscribes.json")) || [];
++         if (!existing.find((r) => r.email === email)) {
++           await store.append("unsubscribes.json", { email, unsubscribedAt: new Date().toISOString() });
++         } 
           logger.warn(`🚨 Spam complaint — auto-unsubscribed: ${email}`);
           break;
 
@@ -338,11 +343,16 @@ export class ColdMailAgent {
     const nextStep = sequence.find((s) => s.step === latestLog.step + 1);
     if (!nextStep) return null;           // Sequence exhausted
 
-    const daysSinceLast =
-      (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
+    // const daysSinceLast =
+    //   (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
 
-    if (daysSinceLast < nextStep.dayOffset) return null; // Too soon
-
+    // if (daysSinceLast < nextStep.dayOffset) return null; // Too soon
+    const currentStepDef = sequence.find((s) => s.step === latestLog.step);
++   const dayDelta        = nextStep.dayOffset - (currentStepDef?.dayOffset ?? 0);
++   const daysSinceLast   =
++     (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
++
++   if (daysSinceLast < dayDelta) return null;
     return nextStep;
   }
 
