@@ -343,11 +343,16 @@ export class ColdMailAgent {
     const nextStep = sequence.find((s) => s.step === latestLog.step + 1);
     if (!nextStep) return null;           // Sequence exhausted
 
-    const daysSinceLast =
-      (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
+    // const daysSinceLast =
+    //   (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
 
-    if (daysSinceLast < nextStep.dayOffset) return null; // Too soon
-
+    // if (daysSinceLast < nextStep.dayOffset) return null; // Too soon
+    const currentStepDef = sequence.find((s) => s.step === latestLog.step);
++   const dayDelta        = nextStep.dayOffset - (currentStepDef?.dayOffset ?? 0);
++   const daysSinceLast   =
++     (Date.now() - new Date(latestLog.sentAt).getTime()) / (1000 * 60 * 60 * 24);
++
++   if (daysSinceLast < dayDelta) return null;
     return nextStep;
   }
 
