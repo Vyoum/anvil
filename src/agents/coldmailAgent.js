@@ -267,7 +267,12 @@ export class ColdMailAgent {
         case "spam_report":
         case "complaint":
           await store.update("emailLogs.json", (r) => r.email === email, () => ({ status: "spam_reported" }));
-          await this.handleUnsubscribe(email); // Auto-unsubscribe on spam complaints
+          // await this.handleUnsubscribe(email); //
+          // const existing = (await store.read("unsubscribes.json")) || [];
+          const existing = (await store.read("unsubscribes.json")) || [];
++         if (!existing.find((r) => r.email === email)) {
++           await store.append("unsubscribes.json", { email, unsubscribedAt: new Date().toISOString() });
++         } 
           logger.warn(`🚨 Spam complaint — auto-unsubscribed: ${email}`);
           break;
 
