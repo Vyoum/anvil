@@ -1,89 +1,93 @@
-import OpenAI from "openai";
-import { env } from "../config/env.js";
-import { logger } from "../utils/logger.js";
+// src/agents/mailWriterAgent.js
+import { generateColdEmail } from "../services/openAiservice.js";
+import { env }               from "../config/env.js";
+import { logger }            from "../utils/logger.js";
 
 export class MailWriterAgent {
-  constructor() {
-    this.openai = new OpenAI({ apiKey: env.openaiApiKey });
-  }
-
+  /**
+   * Write a cold email for a given lead + campaign config.
+   * Delegates AI generation to openAiService; falls back to templates
+   * if OPENAI_API_KEY is missing or the API call fails.
+   *
+   * @param {Object} options
+   * @param {Object} options.lead           - Lead data from Google Sheets
+   * @param {Object} options.campaign       - Campaign config from runCampaign()
+   * @param {string} options.templateType   - "initial" | "followup_1" | "followup_2" | "breakup"
+   * @param {number} options.stepNumber     - Step index in the sequence
+   * @returns {Promise<{ subject: string, body: string, previewText: string }>}
+   */
   async writeColdEmail({ lead, campaign, templateType, stepNumber }) {
-    // Basic implementation: if OpenAI API key is missing, return a generic template
+    // Skip AI entirely if no API key is configured
     if (!env.openaiApiKey) {
+      logger.warn("[MailWriter] OPENAI_API_KEY not set — using fallback template.");
       return this._fallbackTemplate(lead, campaign, templateType);
     }
-
-    // Use OpenAI to write a hyper-personalized email
-    const prompt = `
-      You are an expert cold outreach specialist. Write a highly personalized, conversational, and non-salesy cold email.
-      
-      CONTEXT:
-      - Sender Name: ${campaign.senderName}
-      - Product/Service: ${campaign.productName}
-      - Value Prop: ${campaign.valueProposition}
-      - Target Persona: ${campaign.targetPersona}
-      - Tone: ${campaign.tone || "professional yet friendly"}
-      - Step in Sequence: ${stepNumber} (${templateType})
-
-      LEAD INFO:
-      - Name: ${lead.firstName || "there"}
-      - Company: ${lead.company || "your company"}
-      - Industry: ${lead.industry || "your industry"}
-      - Recent News/Context: ${lead.context || "N/A"}
-
-      REQUIREMENTS:
-      1. Subject line must be punchy and under 5 words.
-      2. The first sentence MUST be a personalized observation about their company or industry (if context provided).
-      3. Focus on a specific pain point and how we solve it.
-      4. Keep the total length under 150 words.
-      5. Include a clear, low-friction Call to Action (CTA).
-      6. Use a "human" style — no corporate jargon or overly formal language.
-
-      OUTPUT FORMAT (JSON):
-      {
-        "subject": "...",
-        "body": "...",
-        "previewText": "..."
-      }
-    `;
 
     try {
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
-        messages: [
-          { role: "system", content: "You are a world-class copywriter specializing in cold outreach." },
-          { role: "user", content: prompt }
-        ],
-        response_format: { type: "json_object" }
-      });
-
-      const content = JSON.parse(response.choices[0].message.content);
-      return {
-        subject: content.subject,
-        body: content.body,
-        previewText: content.previewText || content.body.slice(0, 100) + "..."
-      };
+      const result = await generateColdEmail({ lead, campaign, templateType, stepNumber });
+      logger.debug(`[MailWriter] AI email generated for ${lead.email} (step ${stepNumber})`);
+      return result;
     } catch (err) {
-      logger.warn(`[MailWriter] Incomplete AI response for ${lead.email} — using fallback template`);
+      logger.warn(
+        `[MailWriter] AI generation failed for ${lead.email} — using fallback template. Reason: ${err.message}`
+      );
       return this._fallbackTemplate(lead, campaign, templateType);
     }
   }
 
+  // ─── Private: Fallback Templates ────────────────────────────────────────────
+
+  /**
+   * Plain-text fallback wrapped in minimal HTML so the sender pipeline
+   * (which expects HTML) can process it correctly — e.g. wrapLinksForTracking.
+   *
+   * @param {Object} lead
+   * @param {Object} campaign
+   * @param {string} templateType
+   * @returns {{ subject: string, body: string, previewText: string }}
+   */
   _fallbackTemplate(lead, campaign, templateType) {
     const name    = lead.firstName || lead.company || "there";
     const company = lead.company   || "your company";
+    const sender  = campaign.senderName || "Anvil";
 
     const bodies = {
-      initial:    `Hi ${name},\n\nI was looking at ${company} and had a few ideas on how ${campaign.productName} could help.\n\nWould you be open to a quick chat?\n\n${campaign.senderName}`,
-      followup_1: `Hi ${name},\n\nJust following up on my last email — wanted to make sure it didn't get buried.\n\n${campaign.senderName}`,
-      followup_2: `Hi ${name},\n\nOne last thought — ${campaign.valueProposition}.\n\nWorth a conversation?\n\n${campaign.senderName}`,
-      breakup:    `Hi ${name},\n\nI won't keep following up after this. If timing ever changes, feel free to reach out.\n\n${campaign.senderName}`,
+      initial: `
+        <p>Hi ${name},</p>
+        <p>I was looking at ${company} and had a few ideas on how ${campaign.productName} could help.</p>
+        <p>${campaign.valueProposition}</p>
+        <p>Would you be open to a quick chat?</p>
+        <p>${sender}</p>
+      `,
+
+      followup_1: `
+        <p>Hi ${name},</p>
+        <p>Just following up on my last email — wanted to make sure it didn't get buried.</p>
+        <p>Worth a quick conversation?</p>
+        <p>${sender}</p>
+      `,
+
+      followup_2: `
+        <p>Hi ${name},</p>
+        <p>One last thought — ${campaign.valueProposition}.</p>
+        <p>Is this something worth exploring together?</p>
+        <p>${sender}</p>
+      `,
+
+      breakup: `
+        <p>Hi ${name},</p>
+        <p>I won't keep following up after this. If the timing ever changes, feel free to reach out.</p>
+        <p>Wishing you and ${company} all the best.</p>
+        <p>${sender}</p>
+      `,
     };
+
+    const body = (bodies[templateType] || bodies.initial).trim();
 
     return {
       subject:     `Quick question, ${name}`,
-      body:        bodies[templateType] || bodies.initial,
-      previewText: `A quick note from ${campaign.senderName}`,
+      body,
+      previewText: `A quick note from ${sender}`,
     };
   }
 }
